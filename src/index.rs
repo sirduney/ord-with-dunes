@@ -28,14 +28,14 @@ use crate::index::entry::TxidValue;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
 
-pub(crate) use self::entry::DuneEntry;
+pub(crate) use {self::entry::DuneEntry, entry::MintEntry};
 
 mod entry;
 mod fetcher;
 mod rtx;
 mod updater;
 
-const SCHEMA_VERSION: u64 = 3;
+const SCHEMA_VERSION: u64 = 4;
 
 macro_rules! define_table {
   ($name:ident, $key:ty, $value:ty) => {

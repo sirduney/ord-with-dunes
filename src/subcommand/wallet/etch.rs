@@ -63,13 +63,11 @@ impl Etch {
 
     let dunestone = Dunestone {
       etching: Some(Etching {
-        deadline: None,
         divisibility: self.divisibility,
-        limit: None,
+        mint: None,
         dune: Some(dune),
         spacers,
         symbol: Some(self.symbol),
-        term: None,
       }),
       edicts: vec![Edict {
         amount: self.supply.to_amount(self.divisibility)?,

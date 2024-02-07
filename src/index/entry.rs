@@ -41,11 +41,10 @@ impl Entry for Txid {
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub(crate) struct DuneEntry {
   pub(crate) burned: u128,
-  pub(crate) deadline: Option<u32>,
   pub(crate) divisibility: u8,
-  pub(crate) end: Option<u32>,
   pub(crate) etching: Txid,
-  pub(crate) limit: Option<u128>,
+  pub(crate) mint: Option<MintEntry>,
+  pub(crate) mints: u64,
   pub(crate) number: u64,
   pub(crate) dune: Dune,
   pub(crate) spacers: u32,
@@ -55,18 +54,30 @@ pub(crate) struct DuneEntry {
 }
 
 pub(super) type DuneEntryValue = (
-  u128,         // burned
+  u128,                   // burned
+  u8,                     // divisibility
+  (u128, u128),           // etching
+  Option<MintEntryValue>, // mint parameters
+  u64,                    // mints
+  u64,                    // number
+  u128,                   // dune
+  u32,                    // spacers
+  u128,                   // supply
+  u32,                    // symbol
+  u32,                    // timestamp
+);
+
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize, Default)]
+pub struct MintEntry {
+  pub deadline: Option<u32>,
+  pub end: Option<u32>,
+  pub limit: Option<u128>,
+}
+
+type MintEntryValue = (
   Option<u32>,  // deadline
-  u8,           // divisibility
-  u32,          // end
-  (u128, u128), // etching
-  u128,         // limit
-  u64,          // number
-  u128,         // dune
-  u32,          // spacers
-  u128,         // supply
-  u32,          // symbol
-  u32,          // timestamp
+  Option<u32>,  // end
+  Option<u128>, // limit
 );
 
 impl DuneEntry {
@@ -82,11 +93,10 @@ impl Default for DuneEntry {
   fn default() -> Self {
     Self {
       burned: 0,
-      deadline: None,
       divisibility: 0,
-      end: None,
       etching: Txid::all_zeros(),
-      limit: None,
+      mint: None,
+      mints: 0,
       number: 0,
       dune: Dune(0),
       spacers: 0,
@@ -117,11 +127,10 @@ impl Entry for DuneEntry {
   fn load(
     (
       burned,
-      deadline,
       divisibility,
-      end,
       etching,
-      limit,
+      mint,
+      mints,
       number,
       dune,
       spacers,
@@ -131,16 +140,19 @@ impl Entry for DuneEntry {
     ): DuneEntryValue,) -> Self {
     Self {
       burned,
-      deadline,
       divisibility,
-      end: (end != u32::max_value()).then_some(end),
       etching: {
         let low = etching.0.to_le_bytes();
         let high = etching.1.to_le_bytes();
         let bytes: Vec<u8> = [low, high].concat();
         Txid::from_slice(bytes.as_slice()).unwrap_or(Txid::all_zeros())
       },
-      limit: (limit != u128::max_value()).then_some(limit),
+      mint: mint.map(|(deadline, end, limit)| MintEntry {
+        deadline,
+        end,
+        limit,
+      }),
+      mints,
       number,
       dune: Dune(dune),
       spacers,
@@ -153,9 +165,7 @@ impl Entry for DuneEntry {
   fn store(self) -> Self::Value {
     (
       self.burned,
-      self.deadline,
       self.divisibility,
-      self.end.unwrap_or(u32::max_value()),
       {
         let bytes_vec = self.etching.to_vec();
         let bytes: [u8; 32] = match bytes_vec.len() {
@@ -177,7 +187,14 @@ impl Entry for DuneEntry {
           ]),
         )
       },
-      self.limit.unwrap_or(u128::max_value()),
+      self.mint.map(
+        |MintEntry {
+           deadline,
+           end,
+           limit,
+         }| (deadline, end, limit),
+      ),
+      self.mints,
       self.number,
       self.dune.0,
       self.spacers,
@@ -215,7 +232,7 @@ pub(crate) type InscriptionEntryValue = (
   u64,         // fee
   u32,         // height
   u64,         // inscription number
-  Option<u64>,         // sat
+  Option<u64>, // sat
   u64,         // sequence number
   u32,         // timestamp
 );

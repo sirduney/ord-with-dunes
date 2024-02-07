@@ -29,7 +29,11 @@ mod tests {
           dune: Dune(u128::max_value()),
           supply: 123456789123456789,
           symbol: Some('$'),
-          limit: Some(1000000001),
+          mint: Some(MintEntry {
+            end: Some(11),
+            limit: Some(1000000001),
+            deadline: Some(7),
+          }),
           end: Some(11),
           timestamp: 0,
         },

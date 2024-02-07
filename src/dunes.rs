@@ -5,16 +5,17 @@ use {
 
 pub use {edict::Edict, dune::Dune, dune_id::DuneId, dunestone::Dunestone};
 
-pub(crate) use {etching::Etching, pile::Pile, spaced_dune::SpacedDune};
+pub(crate) use {etching::Etching, mint::Mint, pile::Pile, spaced_dune::SpacedDune};
 
-pub const MAX_DIVISIBILITY: u8 = 38;
 pub(crate) const CLAIM_BIT: u128 = 1 << 48;
+pub const MAX_DIVISIBILITY: u8 = 38;
 pub(crate) const MAX_LIMIT: u128 = 1 << 64;
 const RESERVED: u128 = 6402364363415443603228541259936211926;
 
 mod edict;
 mod etching;
 mod flag;
+mod mint;
 mod pile;
 mod dune;
 mod dune_id;

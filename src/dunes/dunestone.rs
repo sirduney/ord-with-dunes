@@ -79,8 +79,8 @@ impl Dunestone {
         .unwrap_or_default();
 
     let limit = Tag::Limit
-        .take(&mut fields)
-        .and_then(|limit| (limit <= MAX_LIMIT).then_some(limit));
+      .take(&mut fields)
+      .map(|limit| limit.clamp(0, MAX_LIMIT));
 
     let dune = Tag::Dune.take(&mut fields).map(Dune);
 
@@ -103,15 +103,19 @@ impl Dunestone {
 
     let etch = Flag::Etch.take(&mut flags);
 
+    let mint = Flag::Mint.take(&mut flags);
+
     let etching = if etch {
       Some(Etching {
-        deadline,
         divisibility,
-        limit,
         dune,
         spacers,
         symbol,
-        term,
+        mint: mint.then_some(Mint {
+          deadline,
+          limit,
+          term,
+        }),
       })
     } else {
       None
@@ -132,14 +136,14 @@ impl Dunestone {
       let mut flags = 0;
       Flag::Etch.set(&mut flags);
 
+      if etching.mint.is_some() {
+        Flag::Mint.set(&mut flags);
+      }
+
       Tag::Flags.encode(flags, &mut payload);
 
       if let Some(dune) = etching.dune {
         Tag::Dune.encode(dune.0, &mut payload);
-      }
-
-      if let Some(deadline) = etching.deadline {
-        Tag::Deadline.encode(deadline.into(), &mut payload);
       }
 
       if etching.divisibility != 0 {
@@ -154,12 +158,18 @@ impl Dunestone {
         Tag::Symbol.encode(symbol.into(), &mut payload);
       }
 
-      if let Some(limit) = etching.limit {
-        Tag::Limit.encode(limit, &mut payload);
-      }
+      if let Some(mint) = etching.mint {
+        if let Some(deadline) = mint.deadline {
+          Tag::Deadline.encode(deadline.into(), &mut payload);
+        }
 
-      if let Some(term) = etching.term {
-        Tag::Term.encode(term.into(), &mut payload);
+        if let Some(limit) = mint.limit {
+          Tag::Limit.encode(limit, &mut payload);
+        }
+
+        if let Some(term) = mint.term {
+          Tag::Term.encode(term.into(), &mut payload);
+        }
       }
     }
 
