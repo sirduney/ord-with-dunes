@@ -2,8 +2,8 @@ use super::*;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub(crate) struct Decimal {
-  value: u128,
-  scale: u8,
+  pub value: u128,
+  pub scale: u8,
 }
 
 impl Decimal {
@@ -21,6 +21,30 @@ impl Decimal {
       ),
       None => bail!("excessive precision"),
     }
+  }
+}
+
+impl Display for Decimal {
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    let magnitude = 10u128.checked_pow(self.scale.into()).ok_or(fmt::Error)?;
+
+    let integer = self.value / magnitude;
+    let mut fraction = self.value % magnitude;
+
+    write!(f, "{integer}")?;
+
+    if fraction > 0 {
+      let mut width: usize = self.scale.into();
+
+      while fraction % 10 == 0 {
+        fraction /= 10;
+        width -= 1;
+      }
+
+      write!(f, ".{fraction:0>width$}", width = width)?;
+    }
+
+    Ok(())
   }
 }
 

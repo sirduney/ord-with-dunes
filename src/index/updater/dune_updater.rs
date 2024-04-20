@@ -2,7 +2,7 @@ use {
   super::*,
   crate::dunes::{varint, Edict, Dunestone},
 };
-use crate::index::entry::TxidValue;
+use crate::index::entry::{TxidValue};
 use crate::dunes::CLAIM_BIT;
 
 fn claim(id: u128) -> Option<u128> {
@@ -13,10 +13,12 @@ struct Allocation {
   balance: u128,
   divisibility: u8,
   id: u128,
-  mint: Option<MintEntry>,
+  mint: Option<Terms>,
   dune: Dune,
+  premine: u128,
   spacers: u32,
   symbol: Option<char>,
+  turbo: bool,
 }
 
 pub(super) struct DuneUpdater<'a, 'db, 'tx> {
@@ -95,14 +97,14 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
       }
     }
 
-    let burn = dunestone
+    let cenotaph = dunestone
         .as_ref()
-        .map(|dunestone| dunestone.burn)
+        .map(|dunestone| dunestone.cenotaph)
         .unwrap_or_default();
 
     let default_output = dunestone.as_ref().and_then(|dunestone| {
       dunestone
-          .default_output
+          .pointer
           .and_then(|default| usize::try_from(default).ok())
     });
 
@@ -110,7 +112,7 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
     let mut allocated: Vec<HashMap<u128, u128>> = vec![HashMap::new(); tx.output.len()];
 
     if let Some(dunestone) = dunestone {
-      // Determine if this dunestone conains a valid issuance
+      // Determine if this dunestone contains a valid issuance
       let mut allocation = match dunestone.etching {
         Some(etching) => {
           if etching
@@ -148,25 +150,20 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
             // ignored.
             match u16::try_from(index) {
               Ok(index) => Some(Allocation {
-                balance: if let Some(mint) = etching.mint {
-                  if mint.term == Some(0) {
-                    0
-                  } else {
-                    mint.limit.unwrap_or(dunes::MAX_LIMIT)
-                  }
-                } else {
-                  u128::max_value()
-                },
-                divisibility: etching.divisibility,
+                balance: u128::MAX,
+                divisibility: etching.divisibility.unwrap_or_default(),
                 id: u128::from(self.height) << 16 | u128::from(index),
                 dune,
-                spacers: etching.spacers,
+                premine: etching.premine.unwrap_or_default(),
+                spacers: etching.spacers.unwrap_or_default(),
                 symbol: etching.symbol,
-                mint: etching.mint.map(|mint| MintEntry {
-                  deadline: mint.deadline,
-                  end: mint.term.map(|term| term + self.height),
+                mint: etching.terms.map(|mint| Terms {
+                  cap: mint.cap,
                   limit: mint.limit.map(|limit| limit.clamp(0, dunes::MAX_LIMIT)),
+                  height: mint.height,
+                  offset: mint.offset,
                 }),
+                turbo: etching.turbo,
               }),
               Err(_) => {
                 None
@@ -179,7 +176,9 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
         },
       };
 
-      if !burn {
+      let mut premine_amount = 0;
+
+      if !cenotaph {
         let mut mintable: HashMap<u128, u128> = HashMap::new();
 
         let mut claims = dunestone
@@ -193,19 +192,10 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
           if let Ok(key) = DuneId::try_from(id) {
             if let Some(entry) = self.id_to_entry.get(&key.store())? {
               let entry = DuneEntry::load(entry.value());
-              if let Some(mint) = entry.mint {
-                if let Some(end) = mint.end {
-                  if self.height >= end {
-                    continue;
-                  }
-                }
-                if let Some(deadline) = mint.deadline {
-                  if self.timestamp >= deadline {
-                    continue;
-                  }
-                }
-                mintable.insert(id, mint.limit.unwrap_or(dunes::MAX_LIMIT));
-              }
+              let Ok(limit) = entry.mintable(self.height.into()) else {
+                continue;
+              };
+              mintable.insert(id, limit);
             }
           }
         }
@@ -228,7 +218,10 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
             // Additionally, replace ID 0 with the newly assigned ID, and
             // get the unallocated balance of the issuance.
             match allocation.as_mut() {
-              Some(Allocation { balance, id, .. }) => (balance, *id),
+              Some(Allocation { balance, id, .. }) => {
+                premine_amount = premine_amount + amount;
+                (balance, *id)
+              },
               None => continue,
             }
           } else if let Some(claim) = claim(id) {
@@ -299,6 +292,7 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
             let id = DuneId::try_from(id).unwrap().store();
             let mut entry = DuneEntry::load(self.id_to_entry.get(id)?.unwrap().value());
             entry.supply += minted;
+            entry.mints += 1;
             self.id_to_entry.insert(id, entry.store())?;
           }
         }
@@ -310,39 +304,38 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
         id,
         mint,
         dune,
+        premine,
         spacers,
         symbol,
+        turbo,
       }) = allocation
       {
         let id = DuneId::try_from(id).unwrap();
         self.dune_to_id.insert(dune.0, id.store())?;
         let number = self.dunes;
         self.dunes += 1;
+
         self
             .statistic_to_count
             .insert(&Statistic::Dunes.into(), self.dunes)?;
+
         self.id_to_entry.insert(
           id.store(),
           DuneEntry {
+            block: self.height.into(),
             burned: 0,
             divisibility,
             etching: txid,
             mints: 0,
             number,
-            mint: mint.and_then(|mint| (!burn).then_some(mint)),
+            premine: premine_amount,
+            terms: mint.and_then(|mint| (!cenotaph).then_some(mint)),
             dune,
             spacers,
-            supply: if let Some(mint) = mint {
-              if mint.end == Some(self.height) {
-                0
-              } else {
-                mint.limit.unwrap_or(dunes::MAX_LIMIT)
-              }
-            } else {
-              u128::max_value()
-            } - balance,
+            supply: u128::MAX - balance - premine_amount,
             symbol,
-            timestamp: self.timestamp,
+            timestamp: self.timestamp.into(),
+            turbo,
           }
               .store(),
         )?;
@@ -363,7 +356,7 @@ impl<'a, 'db, 'tx> DuneUpdater<'a, 'db, 'tx> {
 
     let mut burned: HashMap<u128, u128> = HashMap::new();
 
-    if burn {
+    if cenotaph {
       for (id, balance) in unallocated {
         *burned.entry(id).or_default() += balance;
       }

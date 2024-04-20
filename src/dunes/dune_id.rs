@@ -2,8 +2,8 @@ use {super::*, std::num::TryFromIntError};
 
 #[derive(Debug, PartialEq, Copy, Clone, Hash, Eq, Ord, PartialOrd)]
 pub struct DuneId {
-  pub height: u32,
-  pub index: u16,
+  pub height: u64,
+  pub index: u32,
 }
 
 impl TryFrom<u128> for DuneId {
@@ -11,8 +11,8 @@ impl TryFrom<u128> for DuneId {
 
   fn try_from(n: u128) -> Result<Self, Self::Error> {
     Ok(Self {
-      height: u32::try_from(n >> 16)?,
-      index: u16::try_from(n & 0xFFFF).unwrap(),
+      height: u64::try_from(n >> 16)?,
+      index: u32::try_from(n & 0xFFFF).unwrap(),
     })
   }
 }
@@ -25,7 +25,7 @@ impl From<DuneId> for u128 {
 
 impl Display for DuneId {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-    write!(f, "{}/{}", self.height, self.index,)
+    write!(f, "{}:{}", self.height, self.index,)
   }
 }
 
@@ -34,7 +34,7 @@ impl FromStr for DuneId {
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     let (height, index) = s
-        .split_once('/')
+        .split_once(':')
         .ok_or_else(|| anyhow!("invalid dune ID: {s}"))?;
 
     Ok(Self {
@@ -86,19 +86,19 @@ mod tests {
         index: 2
       }
       .to_string(),
-      "1/2"
+      "1:2"
     );
   }
 
   #[test]
   fn from_str() {
-    assert!("/".parse::<DuneId>().is_err());
-    assert!("1/".parse::<DuneId>().is_err());
-    assert!("/2".parse::<DuneId>().is_err());
-    assert!("a/2".parse::<DuneId>().is_err());
-    assert!("1/a".parse::<DuneId>().is_err());
+    assert!(":".parse::<DuneId>().is_err());
+    assert!("1:".parse::<DuneId>().is_err());
+    assert!(":2".parse::<DuneId>().is_err());
+    assert!("a:2".parse::<DuneId>().is_err());
+    assert!("1:a".parse::<DuneId>().is_err());
     assert_eq!(
-      "1/2".parse::<DuneId>().unwrap(),
+      "1:2".parse::<DuneId>().unwrap(),
       DuneId {
         height: 1,
         index: 2
@@ -125,7 +125,7 @@ mod tests {
       height: 1,
       index: 2,
     };
-    let json = "\"1/2\"";
+    let json = "\"1:2\"";
     assert_eq!(serde_json::to_string(&dune_id).unwrap(), json);
     assert_eq!(serde_json::from_str::<DuneId>(json).unwrap(), dune_id);
   }

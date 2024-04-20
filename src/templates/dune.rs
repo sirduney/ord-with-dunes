@@ -1,10 +1,39 @@
 use super::*;
 
-#[derive(Boilerplate)]
+#[derive(Boilerplate, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DuneHtml {
   pub(crate) entry: DuneEntry,
   pub(crate) id: DuneId,
+  pub(crate) mintable: bool,
   pub(crate) inscription: Option<InscriptionId>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneEntryJson {
+  pub(crate) burned: u128,
+  pub(crate) divisibility: u8,
+  pub(crate) etching: Txid,
+  pub(crate) mint: Option<Terms>,
+  pub(crate) mints: u128,
+  pub(crate) number: u64,
+  pub(crate) dune: SpacedDune,
+  pub(crate) supply: u128,
+  pub(crate) symbol: Option<char>,
+  pub(crate) timestamp: u64,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneJson {
+  pub(crate) entry: DuneEntryJson,
+  pub(crate) id: DuneId,
+  pub(crate) mintable: bool,
+  pub(crate) inscription: Option<InscriptionId>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneOutputJson {
+  pub(crate) dune: SpacedDune,
+  pub(crate) balances: Pile,
 }
 
 impl PageContent for DuneHtml {
@@ -50,7 +79,7 @@ mod tests {
 <iframe .* src=/preview/0{64}i0></iframe>
 <dl>
   <dt>id</dt>
-  <dd>10/9</dd>
+  <dd>10:9</dd>
   <dt>number</dt>
   <dd>25</dd>
   <dt>supply</dt>

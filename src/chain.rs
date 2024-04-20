@@ -50,7 +50,7 @@ impl Chain {
 
   pub(crate) fn first_dune_height(self) -> u32 {
     match self {
-      Self::Mainnet => 5008400,
+      Self::Mainnet => 5084000,
       Self::Regtest => 0,
       Self::Signet => 0,
       Self::Testnet => 4250000,

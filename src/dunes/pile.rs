@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct Pile {
   pub(crate) amount: u128,
   pub(crate) divisibility: u8,
@@ -25,9 +26,7 @@ impl Display for Pile {
       write!(f, "{whole}.{fractional:0>width$}")?;
     }
 
-    if let Some(symbol) = self.symbol {
-      write!(f, "\u{00A0}{symbol}")?;
-    }
+    write!(f, "\u{A0}{}", self.symbol.unwrap_or('¤'))?;
 
     Ok(())
   }

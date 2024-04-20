@@ -28,14 +28,14 @@ use crate::index::entry::TxidValue;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
 
-pub(crate) use {self::entry::DuneEntry, entry::MintEntry};
+pub(crate) use {self::entry::DuneEntry};
 
 mod entry;
 mod fetcher;
 mod rtx;
 mod updater;
 
-const SCHEMA_VERSION: u64 = 4;
+const SCHEMA_VERSION: u64 = 5;
 
 macro_rules! define_table {
   ($name:ident, $key:ty, $value:ty) => {
@@ -684,27 +684,26 @@ impl Index {
     Ok(dunic)
   }
 
-  pub(crate) fn get_dune_balance_map(&self) -> Result<BTreeMap<Dune, BTreeMap<OutPoint, u128>>> {
+  pub(crate) fn get_dune_balance_map(&self) -> Result<BTreeMap<SpacedDune, BTreeMap<OutPoint, u128>>> {
     let outpoint_balances = self.get_dune_balances()?;
 
     let rtx = self.database.begin_read()?;
 
     let dune_id_to_dune_entry = rtx.open_table(DUNE_ID_TO_DUNE_ENTRY)?;
 
-    let mut dune_balances: BTreeMap<Dune, BTreeMap<OutPoint, u128>> = BTreeMap::new();
+    let mut dune_balances: BTreeMap<SpacedDune, BTreeMap<OutPoint, u128>> = BTreeMap::new();
 
     for (outpoint, balances) in outpoint_balances {
       for (dune_id, amount) in balances {
-        let dune = DuneEntry::load(
+        let spaced_dune = DuneEntry::load(
           dune_id_to_dune_entry
               .get(&dune_id.store())?
               .unwrap()
               .value(),
-        )
-            .dune;
+        ).spaced_dune();
 
         *dune_balances
-            .entry(dune)
+            .entry(spaced_dune)
             .or_default()
             .entry(outpoint)
             .or_default() += amount;

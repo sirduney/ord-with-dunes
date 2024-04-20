@@ -1,3 +1,4 @@
+use crate::dunes::MintError;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
 use super::*;
@@ -38,46 +39,44 @@ impl Entry for Txid {
   }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub(crate) struct DuneEntry {
+  pub(crate) block: u64,
   pub(crate) burned: u128,
   pub(crate) divisibility: u8,
   pub(crate) etching: Txid,
-  pub(crate) mint: Option<MintEntry>,
-  pub(crate) mints: u64,
+  pub(crate) terms: Option<Terms>,
+  pub(crate) mints: u128,
   pub(crate) number: u64,
+  pub(crate) premine: u128,
   pub(crate) dune: Dune,
   pub(crate) spacers: u32,
   pub(crate) supply: u128,
   pub(crate) symbol: Option<char>,
-  pub(crate) timestamp: u32,
+  pub(crate) timestamp: u64,
+  pub(crate) turbo: bool,
 }
 
 pub(super) type DuneEntryValue = (
-  u128,                   // burned
-  u8,                     // divisibility
-  (u128, u128),           // etching
-  Option<MintEntryValue>, // mint parameters
-  u64,                    // mints
-  u64,                    // number
-  u128,                   // dune
-  u32,                    // spacers
-  u128,                   // supply
-  u32,                    // symbol
-  u32,                    // timestamp
+  u64,                      // block
+  u128,                     // burned
+  u8,                       // divisibility
+  (u128, u128),             // etching
+  Option<TermsEntryValue>,  // terms parameters
+  u128,                     // mints
+  u64,                      // number
+  (u128, u32),              // dune + spacers
+  (u128, u128),             // supply + premine
+  u32,                      // symbol
+  u64,                      // timestamp
+  bool                      // turbo
 );
 
-#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize, Default)]
-pub struct MintEntry {
-  pub deadline: Option<u32>,
-  pub end: Option<u32>,
-  pub limit: Option<u128>,
-}
-
-type MintEntryValue = (
-  Option<u32>,  // deadline
-  Option<u32>,  // end
-  Option<u128>, // limit
+type TermsEntryValue = (
+  Option<u128>,               // cap
+  Option<u128>,               // limit
+  (Option<u64>, Option<u64>), // height
+  (Option<u64>, Option<u64>), // offset
 );
 
 impl DuneEntry {
@@ -87,22 +86,103 @@ impl DuneEntry {
       spacers: self.spacers,
     }
   }
+
+  pub fn mintable(&self, height: u64) -> Result<u128, MintError> {
+    let Some(terms) = self.terms else {
+      return Err(MintError::Unmintable);
+    };
+
+    if let Some(start) = self.start() {
+      if height < start {
+        return Err(MintError::Start(start));
+      }
+    }
+
+    if let Some(end) = self.end() {
+      if height >= end {
+        return Err(MintError::End(end));
+      }
+    }
+
+    if let Some(cap) = terms.cap {
+      if self.mints >= cap {
+        return Err(MintError::Cap(cap));
+      }
+    } else {
+      if self.mints >= u128::MAX {
+        return Err(MintError::Cap(u128::MAX));
+      }
+    }
+
+    Ok(terms.limit.unwrap_or_default())
+  }
+
+  pub fn pile(&self, amount: u128) -> Pile {
+    Pile {
+      amount,
+      divisibility: self.divisibility,
+      symbol: self.symbol,
+    }
+  }
+
+  pub fn start(&self) -> Option<u64> {
+    let terms = self.terms?;
+
+    let relative = terms
+        .offset
+        .0
+        .map(|offset| self.block.saturating_add(offset));
+
+    let absolute = terms.height.0;
+
+    relative
+        .zip(absolute)
+        .map(|(relative, absolute)| relative.max(absolute))
+        .or(relative)
+        .or(absolute)
+  }
+
+  pub fn end(&self) -> Option<u64> {
+    let terms = self.terms?;
+
+    let relative = terms
+        .offset
+        .1
+        .map(|offset| self.block.saturating_add(offset));
+
+    let absolute = terms.height.1;
+
+    relative
+        .zip(absolute)
+        .map(|(relative, absolute)| relative.min(absolute))
+        .or(relative)
+        .or(absolute)
+  }
+
+  pub fn supply(&self) -> u128 {
+    self.premine
+        + self.supply
+        + self.burned
+  }
 }
 
 impl Default for DuneEntry {
   fn default() -> Self {
     Self {
+      block: 0,
       burned: 0,
       divisibility: 0,
       etching: Txid::all_zeros(),
-      mint: None,
+      terms: None,
       mints: 0,
       number: 0,
+      premine: 0,
       dune: Dune(0),
       spacers: 0,
       supply: 0,
       symbol: None,
       timestamp: 0,
+      turbo: false,
     }
   }
 }
@@ -123,22 +203,23 @@ impl Entry for Txid {
 
 impl Entry for DuneEntry {
   type Value = DuneEntryValue;
-
   fn load(
     (
+      block,
       burned,
       divisibility,
       etching,
-      mint,
+      terms,
       mints,
       number,
-      dune,
-      spacers,
-      supply,
+      (dune, spacers),
+      (supply, premine),
       symbol,
       timestamp,
+      turbo,
     ): DuneEntryValue,) -> Self {
     Self {
+      block,
       burned,
       divisibility,
       etching: {
@@ -147,23 +228,27 @@ impl Entry for DuneEntry {
         let bytes: Vec<u8> = [low, high].concat();
         Txid::from_slice(bytes.as_slice()).unwrap_or(Txid::all_zeros())
       },
-      mint: mint.map(|(deadline, end, limit)| MintEntry {
-        deadline,
-        end,
+      terms: terms.map(|(cap, limit, height, offset)| Terms {
+        cap,
         limit,
+        height,
+        offset,
       }),
       mints,
       number,
+      premine,
       dune: Dune(dune),
       spacers,
       supply,
       symbol: char::from_u32(symbol),
       timestamp,
+      turbo,
     }
   }
 
   fn store(self) -> Self::Value {
     (
+      self.block,
       self.burned,
       self.divisibility,
       {
@@ -187,25 +272,26 @@ impl Entry for DuneEntry {
           ]),
         )
       },
-      self.mint.map(
-        |MintEntry {
-           deadline,
-           end,
+      self.terms.map(
+        |Terms {
+          cap,
            limit,
-         }| (deadline, end, limit),
+           height,
+           offset,
+         }| (cap, limit, height, offset),
       ),
       self.mints,
       self.number,
-      self.dune.0,
-      self.spacers,
-      self.supply,
-      self.symbol.map(u32::from).unwrap_or(u32::max_value()),
+      (self.dune.0, self.spacers),
+      (self.supply, self.premine),
+      self.symbol.map(u32::from).unwrap_or(u32::MAX),
       self.timestamp,
+      self.turbo
     )
   }
 }
 
-pub(super) type DuneIdValue = (u32, u16);
+pub(super) type DuneIdValue = (u64, u32);
 
 impl Entry for DuneId {
   type Value = DuneIdValue;

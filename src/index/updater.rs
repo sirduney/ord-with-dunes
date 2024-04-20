@@ -327,7 +327,7 @@ impl<'index> Updater<'_> {
     log::info!(
       "Block {} at {} with {} transactions…",
       self.height,
-      timestamp(block.header.time),
+      timestamp(block.header.time.into()),
       block.txdata.len()
     );
 
