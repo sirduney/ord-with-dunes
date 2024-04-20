@@ -6,11 +6,17 @@ pub(super) enum Tag {
   Flags = 2,
   Dune = 4,
   Limit = 6,
-  Term = 8,
-  Deadline = 10,
-  DefaultOutput = 12,
+  OffsetEnd = 8,
+  Deadline = 10, // will be ignored
+  Pointer = 12,
+  HeightStart = 14,
+  OffsetStart = 16,
+  HeightEnd = 18,
+  Cap = 20,
+  Premine = 22,
+
   #[allow(unused)]
-  Burn = 254,
+  Cenotaph = 254,
 
   Divisibility = 1,
   Spacers = 3,

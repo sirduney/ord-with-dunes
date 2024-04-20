@@ -8,20 +8,22 @@ const MAX_SPACERS: u32 = 0b00000111_11111111_11111111_11111111;
 pub struct Dunestone {
   pub edicts: Vec<Edict>,
   pub etching: Option<Etching>,
-  pub default_output: Option<u32>,
-  pub burn: bool,
+  pub pointer: Option<u32>,
+  pub cenotaph: bool,
 }
 
 
 struct Message {
+  cenotaph: bool,
   fields: HashMap<u128, u128>,
   edicts: Vec<Edict>,
 }
 
 impl Message {
-  fn from_integers(payload: &[u128]) -> Self {
+  fn from_integers(tx: &Transaction, payload: &[u128]) -> Self {
     let mut edicts = Vec::new();
     let mut fields = HashMap::new();
+    let mut cenotaph = false;
 
     for i in (0..payload.len()).step_by(2) {
       let tag = payload[i];
@@ -30,11 +32,11 @@ impl Message {
         let mut id = 0u128;
         for chunk in payload[i + 1..].chunks_exact(3) {
           id = id.saturating_add(chunk[0]);
-          edicts.push(Edict {
-            id,
-            amount: chunk[1],
-            output: chunk[2],
-          });
+          if let Some(edict) = Edict::from_integers(tx, id, chunk[1], chunk[2]) {
+            edicts.push(edict);
+          } else {
+            cenotaph = true;
+          }
         }
         break;
       }
@@ -46,7 +48,7 @@ impl Message {
       fields.entry(tag).or_insert(value);
     }
 
-    Self { fields, edicts }
+    Self { cenotaph, fields, edicts }
   }
 }
 
@@ -62,21 +64,21 @@ impl Dunestone {
 
     let integers = Dunestone::integers(&payload);
 
-    let Message { mut fields, edicts } = Message::from_integers(&integers);
+    let Message { cenotaph, mut fields, mut edicts } = Message::from_integers(transaction, &integers);
 
+    /* Ignore deadline
     let deadline = Tag::Deadline
         .take(&mut fields)
-        .and_then(|deadline| u32::try_from(deadline).ok());
+        .and_then(|deadline| u32::try_from(deadline).ok());*/
 
-    let default_output = Tag::DefaultOutput
+    let pointer = Tag::Pointer
         .take(&mut fields)
         .and_then(|default| u32::try_from(default).ok());
 
     let divisibility = Tag::Divisibility
         .take(&mut fields)
         .and_then(|divisibility| u8::try_from(divisibility).ok())
-        .and_then(|divisibility| (divisibility <= MAX_DIVISIBILITY).then_some(divisibility))
-        .unwrap_or_default();
+        .and_then(|divisibility| (divisibility <= MAX_DIVISIBILITY).then_some(divisibility));
 
     let limit = Tag::Limit
       .take(&mut fields)
@@ -84,26 +86,61 @@ impl Dunestone {
 
     let dune = Tag::Dune.take(&mut fields).map(Dune);
 
+    let cap = Tag::Cap
+        .take(&mut fields)
+        .map(|cap| cap);
+
+    let premine = Tag::Premine
+        .take(&mut fields)
+        .map(|premine| premine);
+
+    if premine.unwrap_or_default() > 0 {
+      edicts.push(Edict{
+        id: 0,
+        amount: premine.unwrap_or_default(),
+        output: 1,
+      });
+    }
+
     let spacers = Tag::Spacers
         .take(&mut fields)
         .and_then(|spacers| u32::try_from(spacers).ok())
-        .and_then(|spacers| (spacers <= MAX_SPACERS).then_some(spacers))
-        .unwrap_or_default();
+        .and_then(|spacers| (spacers <= MAX_SPACERS).then_some(spacers));
 
     let symbol = Tag::Symbol
         .take(&mut fields)
         .and_then(|symbol| u32::try_from(symbol).ok())
         .and_then(char::from_u32);
 
-    let term = Tag::Term
-        .take(&mut fields)
-        .and_then(|term| u32::try_from(term).ok());
+    let height = (
+    Tag::HeightStart.take(&mut fields)
+        .and_then(|start_height| u64::try_from(start_height).ok()),
+    Tag::HeightEnd.take(&mut fields)
+        .and_then(|end_height| u64::try_from(end_height).ok())
+    );
+
+    let offset = (
+      Tag::OffsetStart.take(&mut fields)
+          .and_then(|start_offset| u64::try_from(start_offset).ok()),
+      Tag::OffsetEnd.take(&mut fields)
+          .and_then(|end_offset| u64::try_from(end_offset).ok())
+    );
 
     let mut flags = Tag::Flags.take(&mut fields).unwrap_or_default();
 
-    let etch = Flag::Etch.take(&mut flags);
+    let etch = Flag::Etching.take(&mut flags);
 
-    let mint = Flag::Mint.take(&mut flags);
+    let terms = Flag::Terms.take(&mut flags);
+
+    let turbo = Flag::Turbo.take(&mut flags);
+
+    let overflow = (|| {
+      let premine = premine.unwrap_or_default();
+      let cap = cap.unwrap_or_default();
+      let limit = limit.unwrap_or_default();
+      premine.checked_add(cap.checked_mul(limit)?)
+    })()
+        .is_none();
 
     let etching = if etch {
       Some(Etching {
@@ -111,19 +148,22 @@ impl Dunestone {
         dune,
         spacers,
         symbol,
-        mint: mint.then_some(Mint {
-          deadline,
+        terms: terms.then_some(Terms {
+          cap,
+          height,
           limit,
-          term,
+          offset,
         }),
+        premine,
+        turbo,
       })
     } else {
       None
     };
 
     Ok(Some(Self {
-      burn: flags != 0 || fields.keys().any(|tag| tag % 2 == 0),
-      default_output,
+      cenotaph: cenotaph || overflow || flags != 0 || fields.keys().any(|tag| tag % 2 == 0),
+      pointer,
       edicts,
       etching,
     }))
@@ -134,10 +174,10 @@ impl Dunestone {
 
     if let Some(etching) = self.etching {
       let mut flags = 0;
-      Flag::Etch.set(&mut flags);
+      Flag::Etching.set(&mut flags);
 
-      if etching.mint.is_some() {
-        Flag::Mint.set(&mut flags);
+      if etching.terms.is_some() {
+        Flag::Etching.set(&mut flags);
       }
 
       Tag::Flags.encode(flags, &mut payload);
@@ -146,39 +186,43 @@ impl Dunestone {
         Tag::Dune.encode(dune.0, &mut payload);
       }
 
-      if etching.divisibility != 0 {
-        Tag::Divisibility.encode(etching.divisibility.into(), &mut payload);
+      if let Some(divisibility) = etching.divisibility {
+        Tag::Divisibility.encode(divisibility.into(), &mut payload);
       }
 
-      if etching.spacers != 0 {
-        Tag::Spacers.encode(etching.spacers.into(), &mut payload);
+      if let Some(spacers) = etching.spacers {
+        Tag::Spacers.encode(spacers.into(), &mut payload);
       }
 
       if let Some(symbol) = etching.symbol {
         Tag::Symbol.encode(symbol.into(), &mut payload);
       }
 
-      if let Some(mint) = etching.mint {
-        if let Some(deadline) = mint.deadline {
-          Tag::Deadline.encode(deadline.into(), &mut payload);
-        }
+      if let Some(premine) = etching.premine {
+        Tag::Premine.encode(premine.into(), &mut payload);
+      }
 
+      if let Some(mint) = etching.terms {
         if let Some(limit) = mint.limit {
           Tag::Limit.encode(limit, &mut payload);
         }
 
-        if let Some(term) = mint.term {
-          Tag::Term.encode(term.into(), &mut payload);
+        if let Some(term) = mint.height.1 {
+          Tag::HeightEnd.encode(term.into(), &mut payload);
+        }
+
+        if let Some(cap) = mint.cap {
+          Tag::Cap.encode(cap.into(), &mut payload);
         }
       }
     }
 
-    if let Some(default_output) = self.default_output {
-      Tag::DefaultOutput.encode(default_output.into(), &mut payload);
+    if let Some(default_output) = self.pointer {
+      Tag::Pointer.encode(default_output.into(), &mut payload);
     }
 
-    if self.burn {
-      Tag::Burn.encode(0, &mut payload);
+    if self.cenotaph {
+      Tag::Cenotaph.encode(0, &mut payload);
     }
 
     if !self.edicts.is_empty() {

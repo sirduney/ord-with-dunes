@@ -43,23 +43,7 @@ use {
 };
 
 mod error;
-
-enum BlockQuery {
-    Height(u32),
-    Hash(BlockHash),
-}
-
-impl FromStr for BlockQuery {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if s.len() == 64 {
-            BlockQuery::Hash(s.parse()?)
-        } else {
-            BlockQuery::Height(s.parse()?)
-        })
-    }
-}
+mod query;
 
 enum SpawnConfig {
     Https(AxumAcceptor),
@@ -467,6 +451,12 @@ impl Server {
             )
         })?;
 
+        let block_height = index.height()?.unwrap_or(Height(0));
+
+        let mintable = entry
+            .mintable(Height(block_height.n() + 1).0.into())
+            .is_ok();
+
         let inscription = InscriptionId {
             txid: entry.etching,
             index: 0,
@@ -477,12 +467,13 @@ impl Server {
             .then_some(inscription);
 
         Ok(
-            DuneHtml {
-                id,
-                entry,
-                inscription,
-            }
-                .page(page_config),
+          DuneHtml {
+            id,
+            entry,
+            mintable,
+            inscription,
+          }
+              .page(page_config),
         )
     }
 
@@ -529,17 +520,17 @@ impl Server {
     async fn block(
         Extension(page_config): Extension<Arc<PageConfig>>,
         Extension(index): Extension<Arc<Index>>,
-        Path(DeserializeFromStr(query)): Path<DeserializeFromStr<BlockQuery>>,
+        Path(DeserializeFromStr(query)): Path<DeserializeFromStr<query::Block>>,
     ) -> ServerResult<PageHtml<BlockHtml>> {
         let (block, height) = match query {
-            BlockQuery::Height(height) => {
+            query::Block::Height(height) => {
                 let block = index
                     .get_block_by_height(height)?
                     .ok_or_not_found(|| format!("block {height}"))?;
 
                 (block, height)
             }
-            BlockQuery::Hash(hash) => {
+            query::Block::Hash(hash) => {
                 let info = index
                     .block_header_info(hash)?
                     .ok_or_not_found(|| format!("block {hash}"))?;
@@ -569,19 +560,19 @@ impl Server {
 
         let blockhash = index.get_transaction_blockhash(txid)?;
 
-        Ok(
-            TransactionHtml::new(
-                index
-                    .get_transaction(txid)?
-                    .ok_or_not_found(|| format!("transaction {txid}"))?,
-                blockhash,
-                inscription.map(|_| txid.into()),
-                page_config.chain,
-                etching,
-            )
-                .page(page_config),
-        )
-    }
+    Ok(
+      TransactionHtml::new(
+        index
+          .get_transaction(txid)?
+          .ok_or_not_found(|| format!("transaction {txid}"))?,
+        blockhash,
+        inscription.map(|_| txid.into()),
+        page_config.chain,
+        etching,
+      )
+      .page(page_config),
+    )
+  }
 
     async fn status(Extension(index): Extension<Arc<Index>>) -> (StatusCode, &'static str) {
         if index.is_reorged() {
@@ -621,7 +612,7 @@ impl Server {
       static ref OUTPOINT: Regex = Regex::new(r"^[[:xdigit:]]{64}:\d+$").unwrap();
       static ref INSCRIPTION_ID: Regex = Regex::new(r"^[[:xdigit:]]{64}i\d+$").unwrap();
       static ref DUNE: Regex = Regex::new(r"^[A-Z•.]+$").unwrap();
-      static ref DUNE_ID: Regex = Regex::new(r"^[0-9]+/[0-9]+$").unwrap();
+      static ref DUNE_ID: Regex = Regex::new(r"^[0-9]+:[0-9]+$").unwrap();
     }
 
         let query = query.trim();
@@ -915,25 +906,25 @@ impl Server {
 
         let dune = index.get_dune_by_inscription_id(inscription_id)?;
 
-        Ok(
-            InscriptionHtml {
-                chain: page_config.chain,
-                genesis_fee: entry.fee,
-                genesis_height: entry.height,
-                inscription,
-                inscription_id,
-                next,
-                inscription_number: entry.inscription_number,
-                output,
-                previous,
-                sat: entry.sat,
-                satpoint,
-                timestamp: timestamp(entry.timestamp as u32),
-                dune,
-            }
-                .page(page_config),
-        )
-    }
+    Ok(
+      InscriptionHtml {
+        chain: page_config.chain,
+        genesis_fee: entry.fee,
+        genesis_height: entry.height,
+        inscription,
+        inscription_id,
+        next,
+        inscription_number: entry.inscription_number,
+        output,
+        previous,
+        sat: entry.sat,
+        satpoint,
+        timestamp: timestamp(entry.timestamp.into()),
+        dune,
+      }
+      .page(page_config),
+    )
+  }
 
     async fn inscriptions(
         Extension(page_config): Extension<Arc<PageConfig>>,

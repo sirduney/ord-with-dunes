@@ -3,19 +3,19 @@ use {
   super::*,
 };
 
-pub use {edict::Edict, dune::Dune, dune_id::DuneId, dunestone::Dunestone};
+pub use {edict::Edict, dune::Dune, dune_id::DuneId, dunestone::Dunestone, terms::Terms};
 
-pub(crate) use {etching::Etching, mint::Mint, pile::Pile, spaced_dune::SpacedDune};
+pub(crate) use {etching::Etching, pile::Pile, spaced_dune::SpacedDune};
 
 pub(crate) const CLAIM_BIT: u128 = 1 << 48;
 pub const MAX_DIVISIBILITY: u8 = 38;
-pub(crate) const MAX_LIMIT: u128 = 1 << 64;
+pub(crate) const MAX_LIMIT: u128 = u64::MAX as u128;
 const RESERVED: u128 = 6402364363415443603228541259936211926;
 
 mod edict;
 mod etching;
 mod flag;
-mod mint;
+mod terms;
 mod pile;
 mod dune;
 mod dune_id;
@@ -25,6 +25,25 @@ mod tag;
 pub mod varint;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[derive(Debug, PartialEq)]
+pub enum MintError {
+  Cap(u128),
+  End(u64),
+  Start(u64),
+  Unmintable,
+}
+
+impl Display for MintError {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    match self {
+      MintError::Cap(cap) => write!(f, "limited to {cap} mints"),
+      MintError::End(end) => write!(f, "mint ended on block {end}"),
+      MintError::Start(start) => write!(f, "mint starts on block {start}"),
+      MintError::Unmintable => write!(f, "not mintable"),
+    }
+  }
+}
 
 #[cfg(test)]
 mod tests {

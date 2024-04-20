@@ -7,20 +7,24 @@ pub struct Output {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct DuneInfo {
+  pub block: u64,
   pub burned: u128,
   pub divisibility: u8,
   pub etching: Txid,
-  pub height: u32,
+  pub height: u64,
   pub id: DuneId,
-  pub index: u16,
-  pub mint: Option<MintEntry>,
-  pub mints: u64,
+  pub index: u32,
+  pub terms: Option<Terms>,
+  pub mints: u128,
   pub number: u64,
+  pub premine: u128,
   pub dune: Dune,
   pub spacers: u32,
   pub supply: u128,
   pub symbol: Option<char>,
   pub timestamp: DateTime<Utc>,
+  pub turbo: bool,
+  pub tx: u32,
 }
 
 pub(crate) fn run(options: Options) -> SubcommandResult {
@@ -40,37 +44,44 @@ pub(crate) fn run(options: Options) -> SubcommandResult {
       .map(
         |(
           id,
-          DuneEntry {
+          entry @ DuneEntry {
+            block,
             burned,
             divisibility,
             etching,
-            mint,
+            terms,
             mints,
             number,
+            premine,
             dune,
             spacers,
             supply,
             symbol,
             timestamp,
+            turbo,
           },
         )| {
           (
             dune,
             DuneInfo {
+              block,
               burned,
               divisibility,
               etching,
               height: id.height,
               id,
               index: id.index,
-              mint,
+              terms,
               mints,
               number,
+              premine,
               timestamp: crate::timestamp(timestamp),
               dune,
               spacers,
               supply,
               symbol,
+              turbo,
+              tx: id.index,
             },
           )
         },

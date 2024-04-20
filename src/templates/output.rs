@@ -16,6 +16,38 @@ impl PageContent for OutputHtml {
   }
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct OutputJson {
+  pub address: Option<String>,
+  pub inscriptions: Vec<InscriptionId>,
+  pub dunes: Vec<(SpacedDune, Pile)>,
+  pub script_pubkey: String,
+  pub transaction: String,
+  pub value: u64,
+}
+
+impl OutputJson {
+  pub fn new(
+    chain: Chain,
+    inscriptions: Vec<InscriptionId>,
+    outpoint: OutPoint,
+    output: TxOut,
+    dunes: Vec<(SpacedDune, Pile)>,
+  ) -> Self {
+    Self {
+      address: chain
+          .address_from_script(&output.script_pubkey)
+          .ok()
+          .map(|address| address.to_string()),
+      inscriptions,
+      dunes,
+      script_pubkey: output.script_pubkey.asm(),
+      transaction: outpoint.txid.to_string(),
+      value: output.value,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use {

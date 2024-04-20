@@ -44,7 +44,7 @@ impl Etch {
     );
 
     let minimum_at_height =
-        Dune::minimum_at_height(options.chain(), Height(u32::try_from(count).unwrap() + 1));
+        Dune::minimum_at_height(options.chain(), Height((u32::try_from(count).unwrap() + 1)));
 
     ensure!(
       dune >= minimum_at_height,
@@ -63,19 +63,21 @@ impl Etch {
 
     let dunestone = Dunestone {
       etching: Some(Etching {
-        divisibility: self.divisibility,
-        mint: None,
+        divisibility: Some(self.divisibility),
+        terms: None,
+        premine: None,
         dune: Some(dune),
-        spacers,
+        spacers: Some(spacers),
         symbol: Some(self.symbol),
+        turbo: false,
       }),
       edicts: vec![Edict {
         amount: self.supply.to_amount(self.divisibility)?,
         id: 0,
         output: 1,
       }],
-      default_output: None,
-      burn: false,
+      pointer: None,
+      cenotaph: false,
     };
 
     let script_pubkey = dunestone.encipher();

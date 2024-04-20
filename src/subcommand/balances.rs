@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Output {
-  pub dunes: BTreeMap<Dune, BTreeMap<OutPoint, u128>>,
+  pub dunes: BTreeMap<SpacedDune, BTreeMap<OutPoint, u128>>,
 }
 
 pub(crate) fn run(options: Options) -> SubcommandResult {

@@ -8,6 +8,7 @@ pub(crate) use {
   inscription::InscriptionHtml,
   inscriptions::InscriptionsHtml,
   output::OutputHtml,
+  output::OutputJson,
   page_config::PageConfig,
   preview::{
     PreviewAudioHtml, PreviewImageHtml, PreviewPdfHtml, PreviewTextHtml, PreviewUnknownHtml,
@@ -15,7 +16,10 @@ pub(crate) use {
   },
   range::RangeHtml,
   rare::RareTxt,
+  dune::DuneEntryJson,
   dune::DuneHtml,
+  dune::DuneJson,
+  dune::DuneOutputJson,
   dune_balances::DuneBalancesHtml,
   dunes::DunesHtml,
   sat::SatHtml,
@@ -128,7 +132,7 @@ mod tests {
   <body>
   <header>
     <nav>
-      <a href=/>Doginals<sup>alpha</sup></a>
+      <a href=/>Dunes<sup>alpha</sup></a>
       .*
       <a href=/rare.txt>rare.txt</a>
       <form action=/search method=get>
@@ -154,7 +158,7 @@ mod tests {
         domain: None,
         index_sats: true,
       }),),
-      r".*<nav>\s*<a href=/>Doginals<sup>alpha</sup></a>.*"
+      r".*<nav>\s*<a href=/>Dunes<sup>alpha</sup></a>.*"
     );
   }
 
@@ -166,7 +170,7 @@ mod tests {
         domain: None,
         index_sats: false,
       }),),
-      r".*<nav>\s*<a href=/>Doginals<sup>alpha</sup></a>.*\s*<form action=/search.*",
+      r".*<nav>\s*<a href=/>Dunes<sup>alpha</sup></a>.*\s*<form action=/search.*",
     );
   }
 
@@ -178,7 +182,7 @@ mod tests {
         domain: None,
         index_sats: true,
       }),),
-      r".*<nav>\s*<a href=/>Doginals<sup>signet</sup></a>.*"
+      r".*<nav>\s*<a href=/>Dunes<sup>signet</sup></a>.*"
     );
   }
 }

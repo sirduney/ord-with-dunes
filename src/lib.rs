@@ -19,7 +19,7 @@ use {
     deserialize_from_str::DeserializeFromStr,
     epoch::Epoch,
     height::Height,
-    index::{Index, List, DuneEntry, MintEntry},
+    index::{Index, List, DuneEntry},
     inscription::Inscription,
     inscription_id::InscriptionId,
     media::Media,
@@ -79,7 +79,7 @@ use crate::sat_point::SatPoint;
 
 pub use self::{
   fee_rate::FeeRate, object::Object, rarity::Rarity,
-  dunes::{Edict, Dune, DuneId, Dunestone},
+  dunes::{Edict, Dune, DuneId, Dunestone, Terms},
   subcommand::wallet::transaction_builder::{Target, TransactionBuilder},
 };
 
@@ -135,8 +135,8 @@ const SUBSIDY_HALVING_INTERVAL_10X: u32 =
   bitcoin::blockdata::constants::SUBSIDY_HALVING_INTERVAL * 10;
 
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
-static INTERRUPTS: AtomicU64 = AtomicU64::new(0);
 static LISTENERS: Mutex<Vec<axum_server::Handle>> = Mutex::new(Vec::new());
+static INDEXER: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(Option::None);
 
 const TARGET_POSTAGE: Amount = Amount::from_sat(10_000);
 
@@ -169,29 +169,40 @@ fn integration_test() -> bool {
     .unwrap_or(false)
 }
 
-pub fn timestamp(seconds: u32) -> DateTime<Utc> {
-  Utc.timestamp_opt(seconds.into(), 0).unwrap()
+pub fn timestamp(seconds: u64) -> DateTime<Utc> {
+  Utc
+      .timestamp_opt(seconds.try_into().unwrap_or(i64::MAX), 0)
+      .unwrap()
 }
 
 const INTERRUPT_LIMIT: u64 = 5;
+
+fn gracefully_shutdown_indexer() {
+  if let Some(indexer) = INDEXER.lock().unwrap().take() {
+    // We explicitly set this to true to notify the thread to not take on new work
+    SHUTTING_DOWN.store(true, atomic::Ordering::Relaxed);
+    log::info!("Waiting for index thread to finish...");
+    if indexer.join().is_err() {
+      log::warn!("Index thread panicked; join failed");
+    }
+  }
+}
 
 pub fn main() {
   env_logger::init();
 
   ctrlc::set_handler(move || {
+    if SHUTTING_DOWN.fetch_or(true, atomic::Ordering::Relaxed) {
+      process::exit(1);
+    }
+
+    println!("Shutting down gracefully. Press <CTRL-C> again to shutdown immediately.");
+
     LISTENERS
       .lock()
       .unwrap()
       .iter()
       .for_each(|handle| handle.graceful_shutdown(Some(Duration::from_millis(100))));
-
-    println!("Detected Ctrl-C, attempting to shut down ord gracefully. Press Ctrl-C {INTERRUPT_LIMIT} times to force shutdown.");
-
-    let interrupts = INTERRUPTS.fetch_add(1, atomic::Ordering::Relaxed);
-
-    if interrupts > INTERRUPT_LIMIT {
-      process::exit(1);
-    }
   })
   .expect("Error setting ctrl-c handler");
 
@@ -207,6 +218,11 @@ pub fn main() {
     {
       eprintln!("{}", err.backtrace());
     }
+
+    gracefully_shutdown_indexer();
+
     process::exit(1);
   }
+
+  gracefully_shutdown_indexer();
 }

@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Boilerplate, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DuneBalancesHtml {
-  pub balances: BTreeMap<Dune, BTreeMap<OutPoint, u128>>,
+  pub balances: BTreeMap<SpacedDune, BTreeMap<OutPoint, u128>>,
 }
 
 impl PageContent for DuneBalancesHtml {

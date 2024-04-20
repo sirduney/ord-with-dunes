@@ -6,6 +6,12 @@ pub struct SpacedDune {
   pub(crate) spacers: u32,
 }
 
+impl SpacedDune {
+  pub fn new(dune: Dune, spacers: u32) -> Self {
+    Self { dune, spacers }
+  }
+}
+
 impl FromStr for SpacedDune {
   type Err = Error;
 
