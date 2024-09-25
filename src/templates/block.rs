@@ -10,6 +10,11 @@ pub(crate) struct BlockHtml {
   height: Height,
 }
 
+pub(crate) struct BlockHashAndConfirmations {
+  pub(crate) hash: Option<BlockHash>,
+  pub(crate) confirmations: Option<u32>,
+}
+
 impl BlockHtml {
   pub(crate) fn new(block: Block, height: Height, best_height: Height) -> Self {
     let mut target = block.header.target().to_be_bytes();

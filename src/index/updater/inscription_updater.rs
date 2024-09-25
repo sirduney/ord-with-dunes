@@ -1,3 +1,4 @@
+use redb::MultimapTable;
 use super::*;
 use crate::inscription::ParsedInscription;
 use crate::sat::Sat;
@@ -22,16 +23,19 @@ pub(super) struct InscriptionUpdater<'a, 'db, 'tx> {
   txid_to_tx: &'a mut Table<'db, 'tx, &'static [u8], &'static [u8]>,
   partial_txid_to_txids: &'a mut Table<'db, 'tx, &'static [u8], &'static [u8]>,
   value_receiver: &'a mut Receiver<u64>,
+  transaction_buffer: Vec<u8>,
+  transaction_id_to_transaction: &'a mut Table<'db, 'tx, &'static TxidValue, &'static [u8]>,
   id_to_entry: &'a mut Table<'db, 'tx, &'static InscriptionIdValue, InscriptionEntryValue>,
   lost_sats: u64,
   next_number: u64,
   number_to_id: &'a mut Table<'db, 'tx, u64, &'static InscriptionIdValue>,
   outpoint_to_value: &'a mut Table<'db, 'tx, &'static OutPointValue, u64>,
+  address_to_outpoint: &'a mut MultimapTable<'db, 'tx, &'static [u8], &'static OutPointValue>,
   reward: u64,
   sat_to_inscription_id: &'a mut Table<'db, 'tx, u64, &'static InscriptionIdValue>,
   satpoint_to_id: &'a mut Table<'db, 'tx, &'static SatPointValue, &'static InscriptionIdValue>,
   timestamp: u32,
-  value_cache: &'a mut HashMap<OutPoint, u64>,
+  value_cache: &'a mut HashMap<OutPoint, OutPointMapValue>,
 }
 
 impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
@@ -42,24 +46,27 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     txid_to_tx: &'a mut Table<'db, 'tx, &'static [u8], &'static [u8]>,
     partial_txid_to_txids: &'a mut Table<'db, 'tx, &'static [u8], &'static [u8]>,
     value_receiver: &'a mut Receiver<u64>,
+    transaction_buffer: Vec<u8>,
+    transaction_id_to_transaction: &'a mut Table<'db, 'tx, &'static TxidValue, &'static [u8]>,
     id_to_entry: &'a mut Table<'db, 'tx, &'static InscriptionIdValue, InscriptionEntryValue>,
     lost_sats: u64,
     number_to_id: &'a mut Table<'db, 'tx, u64, &'static InscriptionIdValue>,
     outpoint_to_value: &'a mut Table<'db, 'tx, &'static OutPointValue, u64>,
+    address_to_outpoint: &'a mut MultimapTable<'db, 'tx, &'static [u8], &'static OutPointValue>,
     sat_to_inscription_id: &'a mut Table<'db, 'tx, u64, &'static InscriptionIdValue>,
     satpoint_to_id: &'a mut Table<'db, 'tx, &'static SatPointValue, &'static InscriptionIdValue>,
     timestamp: u32,
-    value_cache: &'a mut HashMap<OutPoint, u64>,
+    value_cache: &'a mut HashMap<OutPoint, OutPointMapValue>,
   ) -> Result<Self> {
     let next_number = number_to_id
-      .iter()?
-      .rev()
-      .map(|result| {
-        result.map(|(number, _id)| number.value() + 1)
-      })
-      .next()
-      .transpose()?
-      .unwrap_or(0);
+        .iter()?
+        .rev()
+        .map(|result| {
+          result.map(|(number, _id)| number.value() + 1)
+        })
+        .next()
+        .transpose()?
+        .unwrap_or(0);
 
     Ok(Self {
       flotsam: Vec::new(),
@@ -69,11 +76,14 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       txid_to_tx,
       partial_txid_to_txids,
       value_receiver,
+      transaction_buffer,
+      transaction_id_to_transaction,
       id_to_entry,
       lost_sats,
       next_number,
       number_to_id,
       outpoint_to_value,
+      address_to_outpoint,
       reward: Height(height).subsidy(),
       sat_to_inscription_id,
       satpoint_to_id,
@@ -89,6 +99,14 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     input_sat_ranges: Option<&VecDeque<(u64, u64)>>,
   ) -> Result<u64> {
     let mut inscriptions = Vec::new();
+
+    tx.consensus_encode(&mut self.transaction_buffer)
+        .expect("in-memory writers don't error");
+    self
+        .transaction_id_to_transaction
+        .insert(&txid.store(), self.transaction_buffer.as_slice())?;
+
+    self.transaction_buffer.clear();
 
     let mut input_value = 0;
     for tx_in in &tx.input {
@@ -112,13 +130,24 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
           return Err(e);
         }
 
-        input_value += if let Some(value) = self.value_cache.remove(&tx_in.previous_output) {
-          value
-        } else if let Some(value) = self
-          .outpoint_to_value
-          .remove(&tx_in.previous_output.store())?
+        input_value += if let Some(map) = self.value_cache.remove(&tx_in.previous_output) {
+          map.0
+        } else if let Some(map) = self
+            .outpoint_to_value
+            .remove(&tx_in.previous_output.store())?
         {
-          value.value()
+          if let Some(transaction) = self
+              .transaction_id_to_transaction
+              .get(&tx_in.previous_output.txid.store())? {
+            let tx: Transaction = consensus::encode::deserialize(transaction.value())?;
+            let output = tx.output[tx_in.previous_output.vout as usize].clone();
+            if let Some(address_from_script) = Chain::Mainnet
+                .address_from_script(&output.script_pubkey)
+                .ok() {
+              self.address_to_outpoint.remove(address_from_script.to_string().as_bytes(), &tx_in.previous_output.store())?;
+            }
+          }
+          map.value()
         } else {
           self.value_receiver.blocking_recv().ok_or_else(|| {
             anyhow!(
@@ -136,8 +165,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       let mut txids_vec = vec![];
 
       let txs = match self
-        .partial_txid_to_txids
-        .get(&previous_txid_bytes.as_slice())?
+          .partial_txid_to_txids
+          .get(&previous_txid_bytes.as_slice())?
       {
         Some(partial_txids) => {
           let txids = partial_txids.value();
@@ -161,38 +190,36 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       };
 
       match Inscription::from_transactions(txs) {
-        ParsedInscription::None => {
-          // todo: clean up db
-        }
+        ParsedInscription::None => { }
 
         ParsedInscription::Partial => {
           let mut txid_vec = txid.into_inner().to_vec();
           txids_vec.append(&mut txid_vec);
 
           self
-            .partial_txid_to_txids
-            .remove(&previous_txid_bytes.as_slice())?;
+              .partial_txid_to_txids
+              .remove(&previous_txid_bytes.as_slice())?;
           self
-            .partial_txid_to_txids
-            .insert(&txid.into_inner().as_slice(), txids_vec.as_slice())?;
+              .partial_txid_to_txids
+              .insert(&txid.into_inner().as_slice(), txids_vec.as_slice())?;
 
           let mut tx_buf = vec![];
           tx.consensus_encode(&mut tx_buf)?;
           self
-            .txid_to_tx
-            .insert(&txid.into_inner().as_slice(), tx_buf.as_slice())?;
+              .txid_to_tx
+              .insert(&txid.into_inner().as_slice(), tx_buf.as_slice())?;
         }
 
         ParsedInscription::Complete(_inscription) => {
           self
-            .partial_txid_to_txids
-            .remove(&previous_txid_bytes.as_slice())?;
+              .partial_txid_to_txids
+              .remove(&previous_txid_bytes.as_slice())?;
 
           let mut tx_buf = vec![];
           tx.consensus_encode(&mut tx_buf)?;
           self
-            .txid_to_tx
-            .insert(&txid.into_inner().as_slice(), tx_buf.as_slice())?;
+              .txid_to_tx
+              .insert(&txid.into_inner().as_slice(), tx_buf.as_slice())?;
 
           let mut txid_vec = txid.into_inner().to_vec();
           txids_vec.append(&mut txid_vec);
@@ -202,8 +229,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             std::ptr::copy_nonoverlapping(txids_vec.as_ptr(), inscription_id.as_mut_ptr(), 32)
           }
           self
-            .id_to_txids
-            .insert(&inscription_id, txids_vec.as_slice())?;
+              .id_to_txids
+              .insert(&inscription_id, txids_vec.as_slice())?;
 
           let og_inscription_id = InscriptionId {
             txid: Txid::from_slice(&txids_vec[0..32]).unwrap(),
@@ -222,10 +249,10 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     };
 
     let is_coinbase = tx
-      .input
-      .first()
-      .map(|tx_in| tx_in.previous_output.is_null())
-      .unwrap_or_default();
+        .input
+        .first()
+        .map(|tx_in| tx_in.previous_output.is_null())
+        .unwrap_or_default();
 
     if is_coinbase {
       inscriptions.append(&mut self.flotsam);
@@ -260,12 +287,28 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
       output_value = end;
 
+      let address_from_script = Chain::Mainnet.address_from_script(&tx_out.clone().script_pubkey);
+
+      let address = if address_from_script.is_err() {
+        [0u8; 34]
+      } else {
+        address_from_script
+            .unwrap()
+            .to_string()
+            .as_bytes()
+            .try_into()
+            .unwrap_or_else(|_| panic!("Failed to convert slice to array")) // Handle conversion failure
+      };
+
       self.value_cache.insert(
         OutPoint {
           vout: vout.try_into().unwrap(),
           txid,
         },
-        tx_out.value,
+        (
+          tx_out.clone().value,
+          address,
+        )
       );
     }
 
@@ -303,8 +346,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       }
       Origin::New(fee) => {
         self
-          .number_to_id
-          .insert(&self.next_number, &inscription_id)?;
+            .number_to_id
+            .insert(&self.next_number, &inscription_id)?;
 
         let mut sat = None;
         if let Some(input_sat_ranges) = input_sat_ranges {
@@ -331,7 +374,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             sequence_number: 0,
             timestamp: self.timestamp,
           }
-          .store(),
+              .store(),
         )?;
 
         self.next_number += 1;

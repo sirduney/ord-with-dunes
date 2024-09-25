@@ -16,8 +16,9 @@ use {
   indicatif::{ProgressBar, ProgressStyle},
   log::log_enabled,
   redb::{
-    Database, DatabaseError, ReadableTable, Table, TableDefinition, WriteTransaction,
-    StorageError
+    Database, DatabaseError, MultimapTable, MultimapTableDefinition, MultimapTableHandle,
+    ReadOnlyTable, ReadableMultimapTable, ReadableTable, RepairSession, StorageError, Table,
+    TableDefinition, TableHandle, TableStats, WriteTransaction,
   },
   std::collections::HashMap,
   std::io::Cursor,
@@ -29,6 +30,7 @@ use crate::sat::Sat;
 use crate::sat_point::SatPoint;
 
 pub(crate) use {self::entry::DuneEntry};
+use crate::templates::BlockHashAndConfirmations;
 
 mod entry;
 mod fetcher;
@@ -40,6 +42,13 @@ const SCHEMA_VERSION: u64 = 5;
 macro_rules! define_table {
   ($name:ident, $key:ty, $value:ty) => {
     const $name: TableDefinition<$key, $value> = TableDefinition::new(stringify!($name));
+  };
+}
+
+macro_rules! define_multimap_table {
+  ($name:ident, $key:ty, $value:ty) => {
+    const $name: MultimapTableDefinition<$key, $value> =
+      MultimapTableDefinition::new(stringify!($name));
   };
 }
 
@@ -61,6 +70,8 @@ define_table! { SAT_TO_INSCRIPTION_ID, u64, &InscriptionIdValue }
 define_table! { SAT_TO_SATPOINT, u64, &SatPointValue }
 define_table! { STATISTIC_TO_COUNT, u64, u64 }
 define_table! { TRANSACTION_ID_TO_DUNE, &TxidValue, u128 }
+define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
+define_multimap_table! { ADDRESS_TO_OUTPOINT, &[u8], &OutPointValue}
 define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
 
 pub(crate) struct Index {
@@ -274,6 +285,7 @@ impl Index {
         tx.open_table(INSCRIPTION_TXID_TO_TX)?;
         tx.open_table(PARTIAL_TXID_TO_INSCRIPTION_TXIDS)?;
         tx.open_table(OUTPOINT_TO_VALUE)?;
+        tx.open_multimap_table(ADDRESS_TO_OUTPOINT)?;
         tx.open_table(SATPOINT_TO_INSCRIPTION_ID)?;
         tx.open_table(SAT_TO_INSCRIPTION_ID)?;
         tx.open_table(SAT_TO_SATPOINT)?;
@@ -742,6 +754,24 @@ impl Index {
     Ok(result)
   }
 
+  pub(crate) fn get_account_outputs(&self, address: String) -> Result<Vec<OutPoint>> {
+    let mut result: Vec<OutPoint> = Vec::new();
+
+    self.database
+        .begin_read()?
+        .open_multimap_table(ADDRESS_TO_OUTPOINT)?
+        .get(address.as_bytes())?
+        .for_each(|res| {
+          if let Ok(item) = res {
+            result.push(OutPoint::load(*item.value()));
+          } else {
+            println!("Error: {:?}", res.err().unwrap());
+          }
+        });
+
+    Ok(result)
+  }
+
   pub(crate) fn block_header(&self, hash: BlockHash) -> Result<Option<BlockHeader>> {
     self.client.get_block_header(&hash).into_option()
   }
@@ -958,19 +988,15 @@ impl Index {
     }
   }
 
-  pub(crate) fn get_transaction_blockhash(&self, txid: Txid) -> Result<Option<BlockHash>> {
+  pub(crate) fn get_transaction_blockhash(&self, txid: Txid) -> Result<Option<BlockHashAndConfirmations>> {
     Ok(
       self
-        .client
-        .get_raw_transaction_info(&txid)
-        .into_option()?
-        .and_then(|info| {
-          if info.in_active_chain.unwrap_or_default() {
-            info.blockhash
-          } else {
-            None
-          }
-        }),
+          .client
+          .get_raw_transaction_info(&txid)
+          .into_option()?
+          .and_then(|info| {
+            Some(BlockHashAndConfirmations { hash: info.blockhash, confirmations: info.confirmations })
+          }),
     )
   }
 

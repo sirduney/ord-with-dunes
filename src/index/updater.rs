@@ -6,6 +6,7 @@ use {
   std::sync::mpsc,
   tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender},
 };
+use crate::index::entry::OutPointMapValue;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
 
@@ -318,7 +319,7 @@ impl<'index> Updater<'_> {
     value_receiver: &mut Receiver<u64>,
     wtx: &mut WriteTransaction,
     block: BlockData,
-    value_cache: &mut HashMap<OutPoint, u64>,
+    value_cache: &mut HashMap<OutPoint, OutPointMapValue>,
   ) -> Result<()> {
     let start = Instant::now();
     let mut sat_ranges_written = 0;
@@ -338,6 +339,7 @@ impl<'index> Updater<'_> {
     };
 
     let mut outpoint_to_value = wtx.open_table(OUTPOINT_TO_VALUE)?;
+    let mut address_to_outpoint = wtx.open_multimap_table(ADDRESS_TO_OUTPOINT)?;
 
     let index_inscriptions = self.height >= index.first_inscription_height;
 
@@ -389,6 +391,7 @@ impl<'index> Updater<'_> {
     let mut sat_to_inscription_id = wtx.open_table(SAT_TO_INSCRIPTION_ID)?;
     let mut satpoint_to_inscription_id = wtx.open_table(SATPOINT_TO_INSCRIPTION_ID)?;
     let mut statistic_to_count = wtx.open_table(STATISTIC_TO_COUNT)?;
+    let mut transaction_id_to_transaction = wtx.open_table(TRANSACTION_ID_TO_TRANSACTION)?;
 
     let mut lost_sats = statistic_to_count
         .get(&Statistic::LostSats.key())?
@@ -412,10 +415,13 @@ impl<'index> Updater<'_> {
         &mut inscription_txid_to_tx,
         &mut partial_txid_to_inscription_txids,
         value_receiver,
+        Vec::new(),
+        &mut transaction_id_to_transaction,
         &mut inscription_id_to_inscription_entry,
         lost_sats,
         &mut inscription_number_to_inscription_id,
         &mut outpoint_to_value,
+        &mut address_to_outpoint,
         &mut sat_to_inscription_id,
         &mut satpoint_to_inscription_id,
         block.header.time,
@@ -625,7 +631,7 @@ impl<'index> Updater<'_> {
     Ok(())
   }
 
-  fn commit(&mut self, wtx: WriteTransaction, value_cache: HashMap<OutPoint, u64>) -> Result {
+  fn commit(&mut self, wtx: WriteTransaction, value_cache: HashMap<OutPoint, OutPointMapValue>) -> Result {
     log::info!(
       "Committing at block height {}, {} outputs traversed, {} in map, {} cached",
       self.height,
@@ -653,9 +659,13 @@ impl<'index> Updater<'_> {
 
     {
       let mut outpoint_to_value = wtx.open_table(OUTPOINT_TO_VALUE)?;
+      let mut address_to_outpoint = wtx.open_multimap_table(ADDRESS_TO_OUTPOINT)?;
 
-      for (outpoint, value) in value_cache {
-        outpoint_to_value.insert(&outpoint.store(), &value)?;
+      for (outpoint, map) in value_cache {
+        outpoint_to_value.insert(&outpoint.store(), map.0)?;
+        if map.1 != [0u8; 34] {
+          address_to_outpoint.insert(map.1.as_slice(), &outpoint.store())?;
+        }
       }
     }
 
