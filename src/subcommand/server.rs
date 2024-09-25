@@ -63,6 +63,7 @@ struct Search {
 struct UtxoBalanceQuery {
     limit: Option<usize>,
     show_all: Option<bool>,
+    show_unsafe: Option<bool>,
     value_filter: Option<u64>,
 }
 
@@ -482,6 +483,7 @@ impl Server {
         let (address, page) = (address, page.unwrap_or(0));
         let show_all = query.show_all.unwrap_or(false);
         let value_filter = query.value_filter.unwrap_or(0);
+        let show_unsafe = query.show_unsafe.unwrap_or(false);
 
         let items_per_page = query.limit.unwrap_or(10);
         let page = page as usize;
@@ -495,7 +497,7 @@ impl Server {
         let mut inscription_shibes = 0u128;
 
         for outpoint in outpoints {
-            if !index.get_dune_balances_for_outpoint(outpoint)?.is_empty() {
+            if !index.get_dune_balances_for_outpoint(outpoint)?.is_empty() && !show_unsafe {
                 continue;
             }
             if !show_all && (element_counter < start_index || element_counter > start_index + items_per_page - 1) {
@@ -518,7 +520,9 @@ impl Server {
 
             if !index.get_inscriptions_on_output(outpoint)?.is_empty() {
                 inscription_shibes += output.value as u128;
-                continue;
+                if !show_unsafe {
+                    continue;
+                }
             }
 
             element_counter += 1;
