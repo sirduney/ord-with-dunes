@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Copy, Clone, Debug, PartialEq, Ord, PartialOrd, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Hash)]
 pub struct SpacedDune {
   pub(crate) dune: Dune,
   pub(crate) spacers: u32,

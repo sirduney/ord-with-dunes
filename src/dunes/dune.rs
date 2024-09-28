@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Default, Debug, PartialEq, Copy, Clone, PartialOrd, Ord, Eq)]
+#[derive(Default, Debug, PartialEq, Copy, Clone, PartialOrd, Ord, Eq, Hash)]
 pub struct Dune(pub u128);
 
 impl Dune {

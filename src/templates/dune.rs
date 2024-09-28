@@ -36,6 +36,32 @@ pub(crate) struct DuneOutputJson {
   pub(crate) balances: Pile,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneBalance {
+  pub(crate) dune: SpacedDune,
+  pub(crate) divisibility: u8,
+  pub(crate) symbol: Option<char>,
+  pub(crate) total_balance: u128,
+  pub(crate) total_outputs: u128,
+  pub(crate) balances: Vec<DuneOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneOutput {
+  pub(crate) txid: Txid,
+  pub(crate) vout: u32,
+  pub(crate) script: Script,
+  pub(crate) shibes: u64,
+  pub(crate) balance: u128,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DuneAddressJson {
+  pub(crate) dunes: Vec<DuneBalance>,
+  pub(crate) total_dunes: usize,
+  pub(crate) total_elements: u32,
+}
+
 impl PageContent for DuneHtml {
   fn title(&self) -> String {
     format!("Dune {}", self.entry.spaced_dune())

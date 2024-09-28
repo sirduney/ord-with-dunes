@@ -3,6 +3,7 @@ use super::*;
 #[derive(Boilerplate)]
 pub(crate) struct TransactionHtml {
   blockhash: Option<BlockHash>,
+  confirmations: Option<u32>,
   chain: Chain,
   etching: Option<SpacedDune>,
   inscription: Option<InscriptionId>,
@@ -14,6 +15,7 @@ impl TransactionHtml {
   pub(crate) fn new(
     transaction: Transaction,
     blockhash: Option<BlockHash>,
+    confirmations: Option<u32>,
     inscription: Option<InscriptionId>,
     chain: Chain,
     etching: Option<SpacedDune>,
@@ -21,6 +23,7 @@ impl TransactionHtml {
     Self {
       txid: transaction.txid(),
       blockhash,
+      confirmations,
       chain,
       etching,
       inscription,

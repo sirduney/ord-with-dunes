@@ -1,3 +1,4 @@
+use axum::Json;
 use {
     self::{
         deserialize_from_str::DeserializeFromStr,
@@ -41,6 +42,8 @@ use {
 
     ,
 };
+use crate::templates::{DuneAddressJson, DuneBalance, DuneOutput, DuneOutputJson, Utxo};
+use linked_hash_map::LinkedHashMap;
 
 mod error;
 mod query;
@@ -54,6 +57,34 @@ enum SpawnConfig {
 #[derive(Deserialize)]
 struct Search {
     query: String,
+}
+
+#[derive(Deserialize)]
+struct UtxoBalanceQuery {
+    limit: Option<usize>,
+    show_all: Option<bool>,
+    show_unsafe: Option<bool>,
+    value_filter: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct UtxoAddressJson {
+    pub(crate) utxos: Vec<Utxo>,
+    pub(crate) total_utxos: usize,
+    pub(crate) total_shibes: u128,
+    pub(crate) total_inscription_shibes: u128,
+}
+
+#[derive(Deserialize)]
+struct DunesBalanceQuery {
+    show_all: Option<bool>,
+    list_dunes: Option<bool>,
+    filter: Option<SpacedDune>,
+}
+
+#[derive(Deserialize)]
+struct OutputsQuery {
+    outputs: String,
 }
 
 #[derive(RustEmbed)]
@@ -158,6 +189,11 @@ impl Server {
                 .route("/dune/:dune", get(Self::dune))
                 .route("/dunes", get(Self::dunes))
                 .route("/dunes/balances", get(Self::dunes_balances))
+                .route("/dunes/balance/:address", get(Self::dunes_by_address_unpaginated))
+                .route("/dunes/balance/:address/:page", get(Self::dunes_by_address))
+                .route("/utxos/balance/:address", get(Self::utxos_by_address_unpaginated))
+                .route("/utxos/balance/:address/:page", get(Self::utxos_by_address))
+                .route("/dunes_on_outputs", get(Self::dunes_by_outputs))
                 .route("/sat/:sat", get(Self::sat))
                 .route("/search", get(Self::search_by_query))
                 .route("/search/*query", get(Self::search_by_path))
@@ -420,6 +456,261 @@ impl Server {
         )
     }
 
+    async fn utxos_by_address(
+        Extension(server_config): Extension<Arc<PageConfig>>,
+        Extension(index): Extension<Arc<Index>>,
+        Path(params): Path<(String, u32)>,
+        Query(query): Query<UtxoBalanceQuery>,
+    ) -> ServerResult<Response> {
+        Self::get_utxos_by_address(index, params.0, Some(params.1), query).await
+    }
+
+    async fn utxos_by_address_unpaginated(
+        Extension(server_config): Extension<Arc<PageConfig>>,
+        Extension(index): Extension<Arc<Index>>,
+        Path(params): Path<(String)>,
+        Query(query): Query<UtxoBalanceQuery>,
+    ) -> ServerResult<Response> {
+        Self::get_utxos_by_address(index, params, None, query).await
+    }
+
+    async fn get_utxos_by_address(
+        index: Arc<Index>,
+        address: String,
+        page: Option<u32>,
+        query: UtxoBalanceQuery
+    ) -> ServerResult<Response> {
+        let (address, page) = (address, page.unwrap_or(0));
+        let show_all = query.show_all.unwrap_or(false);
+        let value_filter = query.value_filter.unwrap_or(0);
+        let show_unsafe = query.show_unsafe.unwrap_or(false);
+
+        let items_per_page = query.limit.unwrap_or(10);
+        let page = page as usize;
+        let mut start_index = if page == 0 || page == 1 { 0 } else { (page - 1) * items_per_page + 1 };
+        let mut element_counter = 0;
+
+        let outpoints: Vec<OutPoint> = index.get_account_outputs(address.clone())?;
+
+        let mut utxos = Vec::new();
+        let mut total_shibes = 0u128;
+        let mut inscription_shibes = 0u128;
+
+        for outpoint in outpoints {
+            if !index.get_dune_balances_for_outpoint(outpoint)?.is_empty() && !show_unsafe {
+                continue;
+            }
+            if !show_all && (element_counter < start_index || element_counter > start_index + items_per_page - 1) {
+                continue;
+            }
+
+            let txid = outpoint.txid;
+            let vout = outpoint.vout;
+            let output = index
+                .get_transaction(txid)?
+                .ok_or_not_found(|| format!("{txid} current transaction"))?
+                .output
+                .into_iter()
+                .nth(vout.try_into().unwrap())
+                .ok_or_not_found(|| format!("{vout} current transaction output"))?;
+
+            if value_filter > 0 && output.value <= value_filter {
+                continue;
+            }
+
+            if !index.get_inscriptions_on_output(outpoint)?.is_empty() {
+                inscription_shibes += output.value as u128;
+                if !show_unsafe {
+                    continue;
+                }
+            }
+
+            element_counter += 1;
+
+            total_shibes += output.value as u128;
+
+            let confirmations = if let Some(block_hash_info) = index.get_transaction_blockhash(txid)? {
+                block_hash_info.confirmations
+            } else {
+                None
+            };
+
+            utxos.push(Utxo {
+                txid,
+                vout,
+                script: output.script_pubkey,
+                shibes: output.value,
+                confirmations,
+            });
+        }
+        Ok(Json(UtxoAddressJson { utxos, total_shibes, total_utxos: element_counter, total_inscription_shibes: inscription_shibes }).into_response())
+    }
+
+    async fn dunes_by_address(
+        Extension(server_config): Extension<Arc<PageConfig>>,
+        Extension(index): Extension<Arc<Index>>,
+        Path(params): Path<(String, u32)>,
+        Query(query): Query<DunesBalanceQuery>,
+    ) -> ServerResult<Response> {
+        Self::get_dunes_by_address(index, params.0, Some(params.1), query).await
+    }
+
+    async fn dunes_by_address_unpaginated(
+        Extension(server_config): Extension<Arc<PageConfig>>,
+        Extension(index): Extension<Arc<Index>>,
+        Path(params): Path<(String)>,
+        Query(query): Query<DunesBalanceQuery>,
+    ) -> ServerResult<Response> {
+        Self::get_dunes_by_address(index, params, None, query).await
+    }
+
+    async fn get_dunes_by_address(
+        index: Arc<Index>,
+        address: String,
+        page: Option<u32>,
+        query: DunesBalanceQuery
+    ) -> ServerResult<Response> {
+        let (address, page) = (address, page.unwrap_or(0));
+        let show_all = query.show_all.unwrap_or(false);
+        let list_dunes = query.list_dunes.unwrap_or(false);
+
+        let outpoints = index.get_account_outputs(address)?;
+
+        let items_per_page = 10usize;
+        let page = page as usize;
+        let mut start_index = if page == 0 { 0 } else { (page - 1) * items_per_page };
+        let mut elements_counter = 0;
+
+        let mut dune_balances_map: LinkedHashMap<SpacedDune, DuneBalance> = LinkedHashMap::new();
+
+        for outpoint in outpoints {
+            let dunes = index.get_dune_balances_for_outpoint(outpoint)?;
+            for (dune, balances) in dunes {
+                if let Some(filter) = query.filter {
+                    if dune != filter {
+                        continue;
+                    }
+                }
+                let dune_balance = dune_balances_map.entry(dune.clone()).or_insert_with(|| DuneBalance {
+                    dune: dune.clone(),
+                    divisibility: balances.divisibility,
+                    symbol: balances.symbol,
+                    total_balance: 0,
+                    total_outputs: 0,
+                    balances: Vec::new(),
+                });
+
+                if !list_dunes {
+                    let txid = outpoint.txid;
+                    let vout = outpoint.vout;
+                    let output = index
+                        .get_transaction(txid)?
+                        .ok_or_not_found(|| format!("dunes {txid} current transaction"))?
+                        .output
+                        .into_iter()
+                        .nth(vout.try_into().unwrap())
+                        .ok_or_not_found(|| format!("dunes {vout} current transaction output"))?;
+
+                    dune_balance.balances.push(DuneOutput {
+                        txid,
+                        vout,
+                        script: output.script_pubkey,
+                        shibes: output.value,
+                        balance: balances.amount,
+                    });
+                }
+
+                dune_balance.total_balance += balances.amount;
+                dune_balance.total_outputs += 1;
+                elements_counter += 1;
+            }
+        }
+
+        let dune_balances: Vec<DuneBalance> = if show_all {
+            dune_balances_map
+                .values()
+                .cloned()
+                .collect()
+        } else if list_dunes {
+            dune_balances_map
+                .values()
+                .cloned()
+                .skip(start_index)
+                .take(items_per_page)
+                .collect()
+        } else {
+            let mut values: Vec<DuneBalance> = dune_balances_map
+                .values()
+                .cloned()
+                .collect();
+            let mut items_collected = 0;
+            let mut result = Vec::new();
+            for value in values.iter() {
+                let balances: Vec<DuneOutput> = value.balances
+                    .iter()
+                    .skip(start_index)
+                    .take(items_per_page - items_collected)
+                    .cloned()
+                    .collect();
+                items_collected += balances.len();
+                start_index -= value.balances.len().min(start_index);
+                if balances.is_empty() {
+                    continue;
+                }
+                result.push(DuneBalance {
+                    dune: value.dune.clone(),
+                    divisibility: value.divisibility,
+                    symbol: value.symbol.clone(),
+                    total_balance: value.total_balance,
+                    total_outputs: value.total_outputs,
+                    balances,
+                });
+                if items_collected >= items_per_page {
+                    break;
+                }
+            }
+            result
+        };
+
+        Ok(Json(DuneAddressJson { dunes: dune_balances, total_dunes: dune_balances_map.len(), total_elements: elements_counter }).into_response())
+    }
+
+    async fn dunes_by_outputs(
+        Extension(server_config): Extension<Arc<PageConfig>>,
+        Extension(index): Extension<Arc<Index>>,
+        Query(query): Query<OutputsQuery>,
+    ) -> ServerResult<Response> {
+        let mut all_dunes_jsons = Vec::new();
+
+        // Split the outputs string into individual outputs
+        let outputs = query.outputs.split(',');
+
+        for output in outputs {
+            // Split the output into tx_id and vout
+            let parts: Vec<&str> = output.split(':').collect();
+            if parts.len() != 2 {
+                return Err(ServerError::BadRequest("wrong output format".to_string()));
+            }
+
+            let tx_id = Txid::from_str(parts[0])
+                .map_err(|_| ServerError::BadRequest("wrong tx id format".to_string()))?;
+            let vout = parts[1]
+                .parse::<u32>()
+                .map_err(|_| ServerError::BadRequest("wrong vout format".to_string()))?;
+
+            // Create OutPoint
+            let outpoint = OutPoint::new(tx_id, vout);
+
+            let dunes = index.get_dune_balances_for_outpoint(outpoint)?;
+
+            for (dune, balances) in dunes {
+                all_dunes_jsons.push(DuneOutputJson { dune, balances });
+            }
+        }
+
+        Ok(Json(all_dunes_jsons).into_response())
+    }
+
     async fn range(
         Extension(page_config): Extension<Arc<PageConfig>>,
         Path((DeserializeFromStr(start), DeserializeFromStr(end))): Path<(
@@ -558,18 +849,24 @@ impl Server {
 
         let etching = index.get_etching(txid)?;
 
-        let blockhash = index.get_transaction_blockhash(txid)?;
+        let mut blockhash = None;
+        let mut confirmations = None;
 
+        if let Some(block_hash_info) = index.get_transaction_blockhash(txid)? {
+            blockhash = block_hash_info.hash;
+            confirmations = block_hash_info.confirmations;
+        }
     Ok(
-      TransactionHtml::new(
-        index
-          .get_transaction(txid)?
-          .ok_or_not_found(|| format!("transaction {txid}"))?,
-        blockhash,
-        inscription.map(|_| txid.into()),
-        page_config.chain,
-        etching,
-      )
+        TransactionHtml::new(
+            index
+                .get_transaction(txid)?
+                .ok_or_not_found(|| format!("transaction {txid}"))?,
+            blockhash,
+            confirmations,
+            inscription.map(|_| txid.into()),
+            page_config.chain,
+            etching
+        )
       .page(page_config),
     )
   }

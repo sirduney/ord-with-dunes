@@ -1,7 +1,7 @@
 use {super::*, boilerplate::Boilerplate};
 
 pub(crate) use {
-  block::BlockHtml,
+  block::{BlockHtml, BlockHashAndConfirmations},
   home::HomeHtml,
   iframe::Iframe,
   input::InputHtml,
@@ -18,8 +18,8 @@ pub(crate) use {
   rare::RareTxt,
   dune::DuneEntryJson,
   dune::DuneHtml,
-  dune::DuneJson,
-  dune::DuneOutputJson,
+  utxo::Utxo,
+  dune::{DuneAddressJson, DuneJson, DuneOutputJson, DuneBalance, DuneOutput},
   dune_balances::DuneBalancesHtml,
   dunes::DunesHtml,
   sat::SatHtml,
@@ -41,6 +41,7 @@ mod dune_balances;
 mod dunes;
 mod sat;
 mod transaction;
+mod utxo;
 
 #[derive(Boilerplate)]
 pub(crate) struct PageHtml<T: PageContent> {

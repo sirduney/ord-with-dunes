@@ -373,6 +373,32 @@ impl Entry for InscriptionId {
   }
 }
 
+pub(crate) struct OutPointMap {
+  pub(crate) value: u64,
+  pub(crate) address: [u8; 34],
+}
+
+pub(crate) type OutPointMapValue = (u64, [u8; 34]);
+
+impl Entry for OutPointMap {
+  type Value = OutPointMapValue;
+
+  fn load(value: Self::Value,
+  ) -> Self {
+    Self {
+      value: value.0,
+      address: value.1,
+    }
+  }
+
+  fn store(self) -> Self::Value {
+    (
+      self.value,
+      self.address,
+    )
+  }
+}
+
 pub(super) type OutPointValue = [u8; 36];
 
 impl Entry for OutPoint {
